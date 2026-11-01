@@ -1,0 +1,27 @@
+# Sapient
+/vendor/
+/.env
+
+# Model data
+/data/
+
+# Hippocampus
+/hippocampus/
+
+# Sandbox Workspace
+/sandbox/
+
+# workflow tests
+/examples/workflows/
+
+# Environment
+/Think
+*.log
+.DS_Store
+.idea/
+.vscode/
+.phpunit.result.cache
+
+# Specific files
+local.php
+discord.php
