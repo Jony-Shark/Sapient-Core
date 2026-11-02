@@ -37,8 +37,38 @@ class OllamaAdapter implements LLMInterface {
 
     public function chat(array $messages, array $options = []): string {
         $generationConfig = array_merge($this->generationConfig, $this->normalizeKeys($options));
+        $transformedMessages = $this->prepareMessages($messages);
         
-        // Transform Messages for Ollama (Handle Multimodal)
+        $body = array_merge($this->adapterOptions, [
+            'model'      => $this->model,
+            'messages'   => $transformedMessages,
+        ]);
+
+        if (!empty($generationConfig)) {
+            $body['options'] = $generationConfig;
+        }
+
+        $response = $this->client->post($this->apiUrl, [
+            'json' => $body,
+            'timeout' => $this->timeout
+        ]);
+
+        $data = json_decode($response->getBody(), true);
+        $content = $data['message']['content'] ?? '';
+        
+        // If the model provided thinking data, wrap it in <thought> tags and prepend it
+        if (!empty($data['message']['thinking'])) {
+            $thinkingStr = trim($data['message']['thinking']);
+            $content = "<thought>\n" . $thinkingStr . "\n</thought>\n\n" . $content;
+        }
+        
+        return $content;
+    }
+
+    /**
+     * Transform Sapient Message objects into Ollama message format (with multimodal support).
+     */
+    protected function prepareMessages(array $messages): array {
         $transformedMessages = [];
         foreach ($messages as $msg) {
             $content = $msg->content;
@@ -80,31 +110,8 @@ class OllamaAdapter implements LLMInterface {
             }
             $transformedMessages[] = $newMessage;
         }
-        
-        $body = array_merge($this->adapterOptions, [
-            'model'      => $this->model,
-            'messages'   => $transformedMessages,
-        ]);
 
-        if (!empty($generationConfig)) {
-            $body['options'] = $generationConfig;
-        }
-
-        $response = $this->client->post($this->apiUrl, [
-            'json' => $body,
-            'timeout' => $this->timeout
-        ]);
-
-        $data = json_decode($response->getBody(), true);
-        $content = $data['message']['content'] ?? '';
-        
-        // If the model provided thinking data, wrap it in <thought> tags and prepend it
-        if (!empty($data['message']['thinking'])) {
-            $thinkingStr = trim($data['message']['thinking']);
-            $content = "<thought>\n" . $thinkingStr . "\n</thought>\n\n" . $content;
-        }
-        
-        return $content;
+        return $transformedMessages;
     }
 
     /**

@@ -36,6 +36,55 @@ class GeminiAdapter implements LLMInterface {
         }
 
         // 1. Separate System Instruction from Chat History
+        [$contents, $systemInstruction] = $this->prepareMessages($messages);
+
+        // 2. Prepare API Payload
+        // URL: https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=API_KEY
+        // Use v1beta for now as it's common.
+        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$this->model}:generateContent?key={$this->apiKey}";
+
+        $body = array_merge($this->adapterOptions, [
+            'contents' => $contents,
+        ]);
+
+        $mergedOptions = array_merge($this->generationConfig, $options);
+        if (!empty($mergedOptions)) {
+            $body['generationConfig'] = $mergedOptions;
+        }
+
+        if ($systemInstruction) {
+            $body['systemInstruction'] = $systemInstruction;
+        }
+
+        // 3. Send Request
+        $response = $this->client->post($url, [
+            'json' => $body,
+            'headers' => ['Content-Type' => 'application/json'],
+            'timeout' => $this->timeout
+        ]);
+
+        $data = json_decode($response->getBody(), true);
+
+        // 4. Extract Response
+        if (isset($data['candidates'][0]['content']['parts'][0]['text'])) {
+            return $data['candidates'][0]['content']['parts'][0]['text'];
+        }
+
+        // Check for safety blocks
+        if (isset($data['promptFeedback']['blockReason'])) {
+            return "Error: Blocked by safety filter (" . $data['promptFeedback']['blockReason'] . ")";
+        }
+
+        return "Error: Unexpected response format from Gemini.";
+    }
+
+    /**
+     * Format Sapient Message objects into Gemini REST payload structure.
+     *
+     * @param array $messages
+     * @return array{0: array, 1: ?array}
+     */
+    protected function prepareMessages(array $messages): array {
         $systemInstruction = null;
         $contents = [];
         
@@ -52,6 +101,7 @@ class GeminiAdapter implements LLMInterface {
                 
                 if ($systemInstruction === null) {
                     $systemInstruction = ['parts' => [['text' => $text]]];
+                    continue;
                 }
             }
 
@@ -103,43 +153,6 @@ class GeminiAdapter implements LLMInterface {
             ];
         }
 
-        // 2. Prepare API Payload
-        // URL: https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=API_KEY
-        // Use v1beta for now as it's common.
-        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$this->model}:generateContent?key={$this->apiKey}";
-
-        $body = array_merge($this->adapterOptions, [
-            'contents' => $contents,
-        ]);
-
-        $mergedOptions = array_merge($this->generationConfig, $options);
-        if (!empty($mergedOptions)) {
-            $body['generationConfig'] = $mergedOptions;
-        }
-
-        if ($systemInstruction) {
-            $body['systemInstruction'] = $systemInstruction;
-        }
-
-        // 3. Send Request
-        $response = $this->client->post($url, [
-            'json' => $body,
-            'headers' => ['Content-Type' => 'application/json'],
-            'timeout' => $this->timeout
-        ]);
-
-        $data = json_decode($response->getBody(), true);
-
-        // 4. Extract Response
-        if (isset($data['candidates'][0]['content']['parts'][0]['text'])) {
-            return $data['candidates'][0]['content']['parts'][0]['text'];
-        }
-
-        // Check for safety blocks
-        if (isset($data['promptFeedback']['blockReason'])) {
-            return "Error: Blocked by safety filter (" . $data['promptFeedback']['blockReason'] . ")";
-        }
-
-        return "Error: Unexpected response format from Gemini.";
+        return [$contents, $systemInstruction];
     }
 }

@@ -109,7 +109,74 @@ class VertexAIAdapter implements LLMInterface {
             $this->model
         );
 
-        // Convert messages to Vertex AI Content objects
+        [$contents, $systemInstruction] = $this->prepareMessages($messages);
+
+        $generationConfig = (new GenerationConfig());
+        $mergedOptions = array_merge($this->generationConfig, $options);
+
+        foreach ($mergedOptions as $key => $value) {
+            $setter = 'set' . ucfirst($key);
+
+            if (method_exists($generationConfig, $setter)) {
+                $generationConfig->$setter($value);
+            }
+        }
+
+        $request = (new GenerateContentRequest())
+        ->setModel($modelName)
+        ->setContents($contents)
+        ->setGenerationConfig($generationConfig);
+
+        if ($systemInstruction) {
+            if (method_exists($request, 'setSystemInstruction')) {
+                $request->setSystemInstruction($systemInstruction);
+            } else {
+                array_unshift($contents, $systemInstruction);
+                $request->setContents($contents);
+            }
+        }
+
+        $optionalArgs = array_merge(
+            ['timeoutMillis' => $this->timeout],
+            $this->callOptions
+        );
+
+        // Use our workaround method to handle the waitless GAX retry middleware
+        // TODO: After RetryMiddleware fix simplify this:
+        // $response = $this->client->generateContent($request, $optionalArgs);
+        $response = $this->executeWithRealRetry(function($args) use ($request) {
+            return $this->client->generateContent($request, $args);
+        }, $optionalArgs);
+
+        if (!$response) {
+            throw new \RuntimeException("Vertex AI request failed: Empty response");
+        }
+
+        // If in transient mode, rotate the client for this request
+        if ($this->isTransient) {
+            $this->client->close();
+            $this->client = $this->createClient($this->adapterOptions);
+        }
+
+
+        $responseText = '';
+        foreach ($response->getCandidates() as $candidate) {
+            foreach ($candidate->getContent()->getParts() as $part) {
+                $responseText .= $part->getText();
+            }
+        }
+
+        // Safety Fallback: Vertex API crashes if we try to send empty content in the next turn
+        return (trim($responseText) === '') ? '...' : $responseText;
+    }
+
+    /**
+     * Convert Sapient Message objects into Vertex AI Content objects and an optional system instruction.
+     *
+     * @param array $messages
+     * @return array{0: Content[], 1: ?Content}
+     */
+    protected function prepareMessages(array $messages): array {
         $contents = [];
         $systemInstruction = null;
 
@@ -247,62 +314,6 @@ class VertexAIAdapter implements LLMInterface {
             $contents[] = $content;
         }
 
-        $generationConfig = (new GenerationConfig());
-        $mergedOptions = array_merge($this->generationConfig, $options);
-
-        foreach ($mergedOptions as $key => $value) {
-            $setter = 'set' . ucfirst($key);
-
-            if (method_exists($generationConfig, $setter)) {
-                $generationConfig->$setter($value);
-            }
-        }
-
-        $request = (new GenerateContentRequest())
-        ->setModel($modelName)
-        ->setContents($contents)
-        ->setGenerationConfig($generationConfig);
-
-        if ($systemInstruction) {
-            if (method_exists($request, 'setSystemInstruction')) {
-                $request->setSystemInstruction($systemInstruction);
-            } else {
-                array_unshift($contents, $systemInstruction);
-                $request->setContents($contents);
-            }
-        }
-
-        $optionalArgs = array_merge(
-            ['timeoutMillis' => $this->timeout],
-            $this->callOptions
-        );
-
-        // Use our workaround method to handle the waitless GAX retry middleware
-        // TODO: After RetryMiddleware fix simplify this:
-        // $response = $this->client->generateContent($request, $optionalArgs);
-        $response = $this->executeWithRealRetry(function($args) use ($request) {
-            return $this->client->generateContent($request, $args);
-        }, $optionalArgs);
-
-        if (!$response) {
-            throw new \RuntimeException("Vertex AI request failed: Empty response");
-        }
-
-        // If in transient mode, rotate the client for this request
-        if ($this->isTransient) {
-            $this->client->close();
-            $this->client = $this->createClient($this->adapterOptions);
-        }
-
-
-        $responseText = '';
-        foreach ($response->getCandidates() as $candidate) {
-            foreach ($candidate->getContent()->getParts() as $part) {
-                $responseText .= $part->getText();
-            }
-        }
-
-        // Safety Fallback: Vertex API crashes if we try to send empty content in the next turn
-        return (trim($responseText) === '') ? '...' : $responseText;
+        return [$contents, $systemInstruction];
     }
 }

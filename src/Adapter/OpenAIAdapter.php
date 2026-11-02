@@ -37,8 +37,32 @@ class OpenAIAdapter implements LLMInterface {
         }
 
         $generationConfig = $this->normalizeKeys($options);
+        $transformedMessages = $this->prepareMessages($messages);
+
+        // Call OpenAI API
+        $body = array_merge($this->adapterOptions, $generationConfig);
+        $body['model'] = $this->model;
+        $body['messages'] = $transformedMessages;
+
+        $response = $this->client->post("{$this->baseUrl}/chat/completions", [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $this->apiKey,
+                'Content-Type'  => 'application/json',
+            ],
+            'json' => $body,
+            'timeout' => $this->timeout
+        ]);
+
+        $data = json_decode($response->getBody(), true);
         
-        // Transform messages (Handle Multimodal / Local Images)
+        // Extract text response
+        return $data['choices'][0]['message']['content'] ?? "Error: Unexpected empty response from OpenAI.";
+    }
+
+    /**
+     * Transform Sapient Message objects into OpenAI chat completions message format.
+     */
+    protected function prepareMessages(array $messages): array {
         $transformedMessages = [];
         foreach ($messages as $msg) {
             $role = $msg->role;
@@ -78,24 +102,7 @@ class OpenAIAdapter implements LLMInterface {
             ];
         }
 
-        // Call OpenAI API
-        $body = array_merge($this->adapterOptions, $generationConfig);
-        $body['model'] = $this->model;
-        $body['messages'] = $transformedMessages;
-
-        $response = $this->client->post("{$this->baseUrl}/chat/completions", [
-            'headers' => [
-                'Authorization' => 'Bearer ' . $this->apiKey,
-                'Content-Type'  => 'application/json',
-            ],
-            'json' => $body,
-            'timeout' => $this->timeout
-        ]);
-
-        $data = json_decode($response->getBody(), true);
-        
-        // Extract text response
-        return $data['choices'][0]['message']['content'] ?? "Error: Unexpected empty response from OpenAI.";
+        return $transformedMessages;
     }
 
     /**

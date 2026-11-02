@@ -37,7 +37,58 @@ class AnthropicAdapter implements LLMInterface {
         }
 
         $generationConfig = $this->normalizeKeys($options);
+        [$transformedMessages, $systemPrompt] = $this->prepareMessages($messages);
+
+        // Build request body
+        $body = array_merge($this->adapterOptions, $generationConfig);
+        $body['model'] = $this->model;
+        $body['messages'] = $transformedMessages;
+
+        if ($systemPrompt) {
+            $body['system'] = $systemPrompt;
+        }
+
+        // Call Anthropic Messages API
+        $response = $this->client->post('https://api.anthropic.com/v1/messages', [
+            'headers' => [
+                'x-api-key' => $this->apiKey,
+                'anthropic-version' => '2023-06-01',
+                'Content-Type' => 'application/json',
+            ],
+            'json' => $body,
+            'timeout' => $this->timeout
+        ]);
+
+        $data = json_decode($response->getBody(), true);
         
+        // Extract text response
+        // Anthropic returns: { content: [{ type: "text", text: "..." }] }
+        if (isset($data['content'])) {
+            $textParts = [];
+            foreach ($data['content'] as $block) {
+                if (($block['type'] ?? '') === 'text') {
+                    $textParts[] = $block['text'];
+                }
+                // Future: handle tool_use blocks if needed
+            }
+            return implode('', $textParts) ?: "Error: Empty response from Anthropic.";
+        }
+
+        // Check for error
+        if (isset($data['error'])) {
+            return "Error: " . ($data['error']['message'] ?? 'Unknown Anthropic API error.');
+        }
+
+        return "Error: Unexpected response format from Anthropic.";
+    }
+
+    /**
+     * Transform Sapient Message objects into Anthropic messages and an optional top-level system prompt.
+     *
+     * @param array $messages
+     * @return array{0: array, 1: ?string}
+     */
+    protected function prepareMessages(array $messages): array {
         // Anthropic separates system prompt from messages (like Gemini)
         $systemPrompt = null;
         $transformedMessages = [];
@@ -115,47 +166,7 @@ class AnthropicAdapter implements LLMInterface {
             ];
         }
 
-        // Build request body
-        $body = array_merge($this->adapterOptions, $generationConfig);
-        $body['model'] = $this->model;
-        $body['messages'] = $transformedMessages;
-
-        if ($systemPrompt) {
-            $body['system'] = $systemPrompt;
-        }
-
-        // Call Anthropic Messages API
-        $response = $this->client->post('https://api.anthropic.com/v1/messages', [
-            'headers' => [
-                'x-api-key' => $this->apiKey,
-                'anthropic-version' => '2023-06-01',
-                'Content-Type' => 'application/json',
-            ],
-            'json' => $body,
-            'timeout' => $this->timeout
-        ]);
-
-        $data = json_decode($response->getBody(), true);
-        
-        // Extract text response
-        // Anthropic returns: { content: [{ type: "text", text: "..." }] }
-        if (isset($data['content'])) {
-            $textParts = [];
-            foreach ($data['content'] as $block) {
-                if (($block['type'] ?? '') === 'text') {
-                    $textParts[] = $block['text'];
-                }
-                // Future: handle tool_use blocks if needed
-            }
-            return implode('', $textParts) ?: "Error: Empty response from Anthropic.";
-        }
-
-        // Check for error
-        if (isset($data['error'])) {
-            return "Error: " . ($data['error']['message'] ?? 'Unknown Anthropic API error.');
-        }
-
-        return "Error: Unexpected response format from Anthropic.";
+        return [$transformedMessages, $systemPrompt];
     }
 
     /**
