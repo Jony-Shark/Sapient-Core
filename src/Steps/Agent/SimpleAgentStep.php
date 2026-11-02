@@ -9,9 +9,11 @@ use Sapient\Core\Message;
 
 class SimpleAgentStep implements StepInterface {
     private $llm;
+    private array $options;
 
-    public function __construct(LLMInterface $llm) {
+    public function __construct(LLMInterface $llm, array $options = []) {
         $this->llm = $llm;
+        $this->options = $options;
     }
 
     public function getName(): string {
@@ -24,7 +26,7 @@ class SimpleAgentStep implements StepInterface {
         
         // 2. Chat
         // In a real scenario, we'd inject System Prompts here if not already in history.
-        $response = $this->llm->chat($messages);
+        $response = $this->llm->chat($messages, $this->options);
         
         // 3. Store raw response in State (so next steps like OutputParser can handle it)
         $state->set('last_response', $response);

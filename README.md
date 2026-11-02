@@ -82,10 +82,28 @@ The constructor separates two concerns:
 
 | Parameter | Purpose | Example |
 |-----------|---------|---------|
-| `$adapterOptions` | API request-level defaults | Ollama: `['stream' => false, 'keep_alive' => '1h']` |
+| `$adapterOptions` | API request-level & `generationConfig` defaults | Ollama: `['stream' => false, 'keep_alive' => '1h']` |
 | `$guzzleOptions` | HTTP client configuration | `['verify' => false, 'proxy' => '...']` |
 
+You can also define default `generationConfig` options on the adapter (e.g. in a service provider) and override them per `chat()` call or per pipeline step:
+
 ```php
+use Google\Cloud\AIPlatform\V1\GenerationConfig\ThinkingConfig;
+use Google\Cloud\AIPlatform\V1\GenerationConfig\ThinkingConfig\ThinkingLevel;
+
+// Set default generationConfig on the adapter
+$llm = new VertexAIAdapter('gemini-3-flash-preview', $projectId, 'us-central1', adapterOptions: [
+    'generationConfig' => [
+        'temperature' => 0.2,
+        'thinkingConfig' => new ThinkingConfig(['thinking_level' => ThinkingLevel::LOW]),
+    ],
+]);
+
+// Override for a specific step in a workflow
+new ExtractionStep($llm, $systemPrompt, $userPrompt, 'result', options: [
+    'thinkingConfig' => new ThinkingConfig(['thinking_level' => ThinkingLevel::HIGH]),
+]);
+
 // Ollama with custom keep_alive (merged with defaults: stream=false, keep_alive=30m)
 $llm = new OllamaAdapter('gemma4:26b', adapterOptions: ['keep_alive' => '1h']);
 

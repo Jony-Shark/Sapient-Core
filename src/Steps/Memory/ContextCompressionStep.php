@@ -12,11 +12,13 @@ class ContextCompressionStep implements StepInterface {
     private $llm;
     private $logger;
     private $maxTurns;
+    private array $options;
 
-    public function __construct(LLMInterface $llm, int $maxTurns = 15, ?LoggerInterface $logger = null) {
+    public function __construct(LLMInterface $llm, int $maxTurns = 15, ?LoggerInterface $logger = null, array $options = []) {
         $this->llm = $llm;
         $this->logger = $logger;
         $this->maxTurns = $maxTurns;
+        $this->options = $options;
     }
 
     public function getName(): string {
@@ -103,7 +105,7 @@ class ContextCompressionStep implements StepInterface {
         try {
             $response = $this->llm->chat([
                 Message::user($prompt)
-            ]);
+            ], $this->options);
             return $response;
         } catch (\Exception $e) {
             if ($this->logger) $this->logger->error("[Memory] Summarization failed: " . $e->getMessage());

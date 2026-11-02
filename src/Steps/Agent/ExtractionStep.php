@@ -18,6 +18,7 @@ class ExtractionStep implements StepInterface {
     private $userPromptTemplate;
     private $mappings;
     private $fileKey;
+    private array $options;
 
     /**
      * @param LLMInterface $llm
@@ -25,12 +26,14 @@ class ExtractionStep implements StepInterface {
      * @param string $userPromptTemplate
      * @param string|array $mappings Either a single state_key string, or ['json_field' => 'state_key']
      * @param string|null $fileKey Optional state key containing a file path to attach.
+     * @param array $options Optional generation config overrides for this step.
      */
-    public function __construct(LLMInterface $llm, string $systemPrompt, string $userPromptTemplate, $mappings, ?string $fileKey = null) {
+    public function __construct(LLMInterface $llm, string $systemPrompt, string $userPromptTemplate, $mappings, ?string $fileKey = null, array $options = []) {
         $this->llm = $llm;
         $this->systemPrompt = $systemPrompt . "\nYou MUST respond with valid JSON only.";
         $this->userPromptTemplate = $userPromptTemplate;
         $this->fileKey = $fileKey;
+        $this->options = $options;
         
         // Normalize mappings: string 'key' -> ['*' => 'key'] (meaning the whole object)
         $this->mappings = is_array($mappings) ? $mappings : ['*' => $mappings];
@@ -64,7 +67,7 @@ class ExtractionStep implements StepInterface {
             $messages[] = Message::user($prompt);
         }
 
-        $response = $this->llm->chat($messages);
+        $response = $this->llm->chat($messages, $this->options);
         
         $decoded = JsonParser::parse($response);
         

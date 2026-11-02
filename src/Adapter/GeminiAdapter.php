@@ -11,6 +11,7 @@ class GeminiAdapter implements LLMInterface {
     private $apiKey;
     private $timeout;
     private $adapterOptions;
+    private array $generationConfig;
 
     protected string $model;
 
@@ -18,6 +19,8 @@ class GeminiAdapter implements LLMInterface {
         $this->model = $model;
         $this->apiKey = $apiKey;
         $this->timeout = $timeout;
+        $this->generationConfig = $adapterOptions['generationConfig'] ?? [];
+        unset($adapterOptions['generationConfig']);
         $this->adapterOptions = $adapterOptions;
         
         $guzzleConfig = array_merge([
@@ -109,8 +112,9 @@ class GeminiAdapter implements LLMInterface {
             'contents' => $contents,
         ]);
 
-        if (!empty($options)) {
-            $body['generationConfig'] = $options;
+        $mergedOptions = array_merge($this->generationConfig, $options);
+        if (!empty($mergedOptions)) {
+            $body['generationConfig'] = $mergedOptions;
         }
 
         if ($systemInstruction) {

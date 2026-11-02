@@ -14,16 +14,19 @@ class DecisionStep implements StepInterface {
     private $llm;
     private $prompt;
     private $branches;
+    private array $options;
 
     /**
      * @param LLMInterface $llm
      * @param string $prompt Question for the AI.
      * @param array $branches Map of expected output -> StepInterface
+     * @param array $options Optional generation config overrides for this step.
      */
-    public function __construct(LLMInterface $llm, string $prompt, array $branches) {
+    public function __construct(LLMInterface $llm, string $prompt, array $branches, array $options = []) {
         $this->llm = $llm;
         $this->prompt = $prompt;
         $this->branches = $branches;
+        $this->options = $options;
     }
 
     public function getName(): string {
@@ -42,7 +45,7 @@ class DecisionStep implements StepInterface {
             Message::user($this->prompt . "\n\nInput to analyze: " . ($state->get('input') ?? 'No input provided'))
         ];
 
-        $decision = trim($this->llm->chat($messages));
+        $decision = trim($this->llm->chat($messages, $this->options));
         
         // Match branch (case-insensitive for robustness)
         foreach ($this->branches as $name => $step) {

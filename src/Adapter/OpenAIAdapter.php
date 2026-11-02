@@ -20,7 +20,9 @@ class OpenAIAdapter implements LLMInterface {
         $this->apiKey = $apiKey;
         $this->baseUrl = $baseUrl;
         $this->timeout = $timeout;
-        $this->adapterOptions = $this->normalizeKeys($adapterOptions);
+        $defaultGenConfig = $this->normalizeKeys($adapterOptions['generationConfig'] ?? []);
+        unset($adapterOptions['generationConfig']);
+        $this->adapterOptions = array_merge($this->normalizeKeys($adapterOptions), $defaultGenConfig);
         
         $guzzleConfig = array_merge([
             'timeout' => $this->timeout,

@@ -18,9 +18,11 @@ class AnthropicAdapter implements LLMInterface {
         $this->model = $model;
         $this->apiKey = $apiKey;
         $this->timeout = $timeout;
+        $defaultGenConfig = $this->normalizeKeys($adapterOptions['generationConfig'] ?? []);
+        unset($adapterOptions['generationConfig']);
         $this->adapterOptions = array_merge([
             'max_tokens' => 4096, // Required by Anthropic API
-        ], $this->normalizeKeys($adapterOptions));
+        ], $this->normalizeKeys($adapterOptions), $defaultGenConfig);
         
         $guzzleConfig = array_merge([
             'timeout' => $this->timeout,

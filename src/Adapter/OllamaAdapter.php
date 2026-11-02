@@ -12,6 +12,7 @@ class OllamaAdapter implements LLMInterface {
     private $baseUrl;
     private $timeout;
     private $adapterOptions;
+    private array $generationConfig;
 
     protected string $model;
 
@@ -20,6 +21,8 @@ class OllamaAdapter implements LLMInterface {
         $this->baseUrl = $baseUrl;
         $this->apiUrl = rtrim($this->baseUrl, '/') . '/api/chat';
         $this->timeout = $timeout;
+        $this->generationConfig = $this->normalizeKeys($adapterOptions['generationConfig'] ?? $adapterOptions['options'] ?? []);
+        unset($adapterOptions['generationConfig'], $adapterOptions['options']);
         $this->adapterOptions = array_merge([
             'stream' => false,
             'keep_alive' => '30m',
@@ -33,7 +36,7 @@ class OllamaAdapter implements LLMInterface {
     }
 
     public function chat(array $messages, array $options = []): string {
-        $generationConfig = $this->normalizeKeys($options);
+        $generationConfig = array_merge($this->generationConfig, $this->normalizeKeys($options));
         
         // Transform Messages for Ollama (Handle Multimodal)
         $transformedMessages = [];

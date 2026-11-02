@@ -32,6 +32,7 @@ class VertexAIAdapter implements LLMInterface {
     private $location;
     private $timeout;
     private $adapterOptions;
+    private array $generationConfig;
     private $callOptions;
     private $client;
     private bool $isTransient = false;
@@ -47,6 +48,8 @@ class VertexAIAdapter implements LLMInterface {
 
         // Toggle to bypass the GAX retry workaround
         $this->useNativeRetry = $this->adapterOptions['use_native_retry'] ?? false;
+        $this->generationConfig = $this->adapterOptions['generationConfig'] ?? [];
+        unset($this->adapterOptions['use_native_retry'], $this->adapterOptions['generationConfig']);
 
         $this->client = $this->createClient($this->adapterOptions);
     }
@@ -245,8 +248,9 @@ class VertexAIAdapter implements LLMInterface {
         }
 
         $generationConfig = (new GenerationConfig());
+        $mergedOptions = array_merge($this->generationConfig, $options);
 
-        foreach ($options as $key => $value) {
+        foreach ($mergedOptions as $key => $value) {
             $setter = 'set' . ucfirst($key);
 
             if (method_exists($generationConfig, $setter)) {
