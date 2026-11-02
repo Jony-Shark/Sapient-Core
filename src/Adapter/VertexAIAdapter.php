@@ -40,7 +40,7 @@ class VertexAIAdapter implements LLMInterface {
 
     public function __construct(string $model, string $projectId = '', string $location = 'us-central1', int $timeout = 180, array $adapterOptions = [], array $callOptions = []) {
         $this->projectId = $projectId;
-        $this->location = $location;
+        $this->location = $location ?: 'global';
         $this->model = $model;
         $this->timeout = $timeout * 1000; // Store as ms
         $this->adapterOptions = $adapterOptions;
@@ -63,7 +63,9 @@ class VertexAIAdapter implements LLMInterface {
     }
 
     private function createClient(array $options = []): PredictionServiceClient {
-        $apiEndpoint = sprintf('%s-aiplatform.googleapis.com', $this->location);
+        $apiEndpoint = ($this->location === 'global')
+            ? 'aiplatform.googleapis.com'
+            : sprintf('%s-aiplatform.googleapis.com', $this->location);
 
         $config = array_merge([
             'apiEndpoint' => $apiEndpoint

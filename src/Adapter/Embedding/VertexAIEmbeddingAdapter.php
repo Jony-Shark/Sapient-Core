@@ -27,7 +27,7 @@ class VertexAIEmbeddingAdapter implements EmbeddingInterface {
     public function __construct(string $model = 'text-embedding-004', string $projectId = '', string $location = 'us-central1', int $timeout = 60, array $adapterOptions = [], array $callOptions = []) {
         $this->model = $model;
         $this->projectId = $projectId;
-        $this->location = $location;
+        $this->location = $location ?: 'global';
         $this->timeout = $timeout * 1000; // Store as ms
         $this->callOptions = $callOptions;
 
@@ -42,7 +42,9 @@ class VertexAIEmbeddingAdapter implements EmbeddingInterface {
     }
 
     protected function createClient(array $options = []): PredictionServiceClient {
-        $apiEndpoint = sprintf('%s-aiplatform.googleapis.com', $this->location);
+        $apiEndpoint = ($this->location === 'global')
+            ? 'aiplatform.googleapis.com'
+            : sprintf('%s-aiplatform.googleapis.com', $this->location);
 
         $config = array_merge([
             'apiEndpoint' => $apiEndpoint
