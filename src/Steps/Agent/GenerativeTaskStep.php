@@ -14,6 +14,7 @@ class GenerativeTaskStep implements StepInterface {
     private $userPromptTemplate;
     private $outputKey;
     private array $options;
+    private ?string $fileKey;
 
     /**
      * @param LLMInterface $llm The LLM provider.
@@ -21,13 +22,15 @@ class GenerativeTaskStep implements StepInterface {
      * @param string $userPromptTemplate Template with {{ placeholders }} for state values.
      * @param string $outputKey Where to store the result in the State.
      * @param array $options Optional generation config overrides for this step.
+     * @param string|null $fileKey Optional state key containing a file/audio/image path or gs:// URI to attach.
      */
-    public function __construct(LLMInterface $llm, string $systemPrompt, string $userPromptTemplate, string $outputKey, array $options = []) {
+    public function __construct(LLMInterface $llm, string $systemPrompt, string $userPromptTemplate, string $outputKey, array $options = [], ?string $fileKey = null) {
         $this->llm = $llm;
         $this->systemPrompt = $systemPrompt;
         $this->userPromptTemplate = $userPromptTemplate;
         $this->outputKey = $outputKey;
         $this->options = $options;
+        $this->fileKey = $fileKey;
     }
 
     public function getName(): string {
@@ -41,8 +44,18 @@ class GenerativeTaskStep implements StepInterface {
         // 2. Prepare Messages (Single Turn)
         $messages = [
             Message::system($this->systemPrompt),
-            Message::user($prompt)
         ];
+
+        $filePath = ($this->fileKey && $state->has($this->fileKey)) ? $state->get($this->fileKey) : null;
+
+        if ($filePath && (strpos($filePath, '://') !== false || file_exists($filePath))) {
+            $messages[] = Message::user([
+                ['type' => 'text', 'text' => $prompt],
+                ['type' => 'file_url', 'file_url' => ['url' => $filePath]],
+            ]);
+        } else {
+            $messages[] = Message::user($prompt);
+        }
 
         // 3. Call LLM
         // Note: We might want structured output forcing later, but for now raw text.

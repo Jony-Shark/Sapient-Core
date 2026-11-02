@@ -37,12 +37,12 @@ class OpenAIAdapter implements LLMInterface {
         }
 
         $generationConfig = $this->normalizeKeys($options);
-        $transformedMessages = $this->prepareMessages($messages);
+        $prepared = $this->prepareMessages($messages);
 
         // Call OpenAI API
         $body = array_merge($this->adapterOptions, $generationConfig);
         $body['model'] = $this->model;
-        $body['messages'] = $transformedMessages;
+        $body['messages'] = $prepared->messages;
 
         $response = $this->client->post("{$this->baseUrl}/chat/completions", [
             'headers' => [
@@ -61,8 +61,11 @@ class OpenAIAdapter implements LLMInterface {
 
     /**
      * Transform Sapient Message objects into OpenAI chat completions message format.
+     *
+     * @param array $messages
+     * @return object{messages: array, system: null}
      */
-    protected function prepareMessages(array $messages): array {
+    protected function prepareMessages(array $messages): object {
         $transformedMessages = [];
         foreach ($messages as $msg) {
             $role = $msg->role;
@@ -74,20 +77,19 @@ class OpenAIAdapter implements LLMInterface {
                 foreach ($content as $partData) {
                     if (($partData['type'] ?? '') === 'text') {
                         $parts[] = ['type' => 'text', 'text' => $partData['text']];
-                    } elseif (($partData['type'] ?? '') === 'image_url') {
-                        $url = $partData['image_url']['url'] ?? '';
+                    } elseif (in_array($partData['type'] ?? '', ['image_url', 'file_url', 'audio_url'], true)) {
+                        $url = $partData['image_url']['url'] ?? $partData['file_url']['url'] ?? $partData['audio_url']['url'] ?? '';
                         
-                        // If it's already a public URL or a base64 data URI, pass it as is
-                        if (strpos($url, 'http') === 0 || strpos($url, 'data:') === 0) {
+                        if (strpos($url, 'data:') === 0) {
+                            $mime = substr($url, 5, strpos($url, ';') - 5);
+                            $base64 = substr($url, strpos($url, ',') + 1);
+                            $parts[] = $this->formatMediaPart($mime, $base64, 'document.pdf', $url);
+                        } elseif (strpos($url, 'http') === 0) {
                             $parts[] = ['type' => 'image_url', 'image_url' => ['url' => $url]];
                         } elseif (file_exists($url)) {
-                            // If it's a local file, convert to base64 Data URI
                             $mime = mime_content_type($url) ?: 'image/jpeg';
                             $base64 = base64_encode(file_get_contents($url));
-                            $parts[] = [
-                                'type' => 'image_url', 
-                                'image_url' => ['url' => "data:{$mime};base64,{$base64}"]
-                            ];
+                            $parts[] = $this->formatMediaPart($mime, $base64, basename($url));
                         } else {
                             $parts[] = ['type' => 'text', 'text' => "[IMAGE NOT FOUND: {$url}]"];
                         }
@@ -102,7 +104,40 @@ class OpenAIAdapter implements LLMInterface {
             ];
         }
 
-        return $transformedMessages;
+        return (object) [
+            'messages' => $transformedMessages,
+            'system'   => null,
+        ];
+    }
+
+    /**
+     * Format a media part for OpenAI based on its MIME type (input_audio, file, or image_url).
+     */
+    private function formatMediaPart(string $mime, string $base64, string $filename = 'document.pdf', ?string $rawDataUri = null): array {
+        if (str_starts_with($mime, 'audio/')) {
+            return [
+                'type' => 'input_audio',
+                'input_audio' => [
+                    'data'   => $base64,
+                    'format' => str_contains($mime, 'wav') ? 'wav' : 'mp3',
+                ],
+            ];
+        }
+
+        if ($mime === 'application/pdf') {
+            return [
+                'type' => 'file',
+                'file' => [
+                    'filename'  => $filename,
+                    'file_data' => $rawDataUri ?? "data:application/pdf;base64,{$base64}",
+                ],
+            ];
+        }
+
+        return [
+            'type' => 'image_url',
+            'image_url' => ['url' => $rawDataUri ?? "data:{$mime};base64,{$base64}"],
+        ];
     }
 
     /**

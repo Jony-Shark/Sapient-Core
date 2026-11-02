@@ -36,7 +36,7 @@ class GeminiAdapter implements LLMInterface {
         }
 
         // 1. Separate System Instruction from Chat History
-        [$contents, $systemInstruction] = $this->prepareMessages($messages);
+        $prepared = $this->prepareMessages($messages);
 
         // 2. Prepare API Payload
         // URL: https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=API_KEY
@@ -44,7 +44,7 @@ class GeminiAdapter implements LLMInterface {
         $url = "https://generativelanguage.googleapis.com/v1beta/models/{$this->model}:generateContent?key={$this->apiKey}";
 
         $body = array_merge($this->adapterOptions, [
-            'contents' => $contents,
+            'contents' => $prepared->messages,
         ]);
 
         $mergedOptions = array_merge($this->generationConfig, $options);
@@ -52,8 +52,8 @@ class GeminiAdapter implements LLMInterface {
             $body['generationConfig'] = $mergedOptions;
         }
 
-        if ($systemInstruction) {
-            $body['systemInstruction'] = $systemInstruction;
+        if ($prepared->system) {
+            $body['systemInstruction'] = $prepared->system;
         }
 
         // 3. Send Request
@@ -82,9 +82,9 @@ class GeminiAdapter implements LLMInterface {
      * Format Sapient Message objects into Gemini REST payload structure.
      *
      * @param array $messages
-     * @return array{0: array, 1: ?array}
+     * @return object{messages: array, system: ?array}
      */
-    protected function prepareMessages(array $messages): array {
+    protected function prepareMessages(array $messages): object {
         $systemInstruction = null;
         $contents = [];
         
@@ -115,9 +115,9 @@ class GeminiAdapter implements LLMInterface {
                     if (isset($part['type'])) {
                         if ($part['type'] === 'text') {
                             $parts[] = ['text' => $part['text']];
-                        } elseif ($part['type'] === 'image_url') {
+                        } elseif (in_array($part['type'], ['image_url', 'file_url', 'audio_url'], true)) {
                             // Extract base64
-                            $url = $part['image_url']['url'] ?? '';
+                            $url = $part['image_url']['url'] ?? $part['file_url']['url'] ?? $part['audio_url']['url'] ?? '';
                             if (strpos($url, 'data:') === 0) {
                                 $base64 = substr($url, strpos($url, ',') + 1);
                                 $mimeType = substr($url, 5, strpos($url, ';') - 5);
@@ -132,6 +132,9 @@ class GeminiAdapter implements LLMInterface {
                                 $fileData = file_get_contents($url);
                                 if ($fileData !== false) {
                                     $mimeType = mime_content_type($url);
+                                    if ($mimeType === 'audio/x-wav') {
+                                        $mimeType = 'audio/wav';
+                                    }
                                     $parts[] = [
                                         'inlineData' => [
                                             'mimeType' => $mimeType ?: 'image/jpeg',
@@ -153,6 +156,9 @@ class GeminiAdapter implements LLMInterface {
             ];
         }
 
-        return [$contents, $systemInstruction];
+        return (object) [
+            'messages' => $contents,
+            'system'   => $systemInstruction,
+        ];
     }
 }

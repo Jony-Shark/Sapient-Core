@@ -37,11 +37,11 @@ class OllamaAdapter implements LLMInterface {
 
     public function chat(array $messages, array $options = []): string {
         $generationConfig = array_merge($this->generationConfig, $this->normalizeKeys($options));
-        $transformedMessages = $this->prepareMessages($messages);
+        $prepared = $this->prepareMessages($messages);
         
         $body = array_merge($this->adapterOptions, [
             'model'      => $this->model,
-            'messages'   => $transformedMessages,
+            'messages'   => $prepared->messages,
         ]);
 
         if (!empty($generationConfig)) {
@@ -67,8 +67,11 @@ class OllamaAdapter implements LLMInterface {
 
     /**
      * Transform Sapient Message objects into Ollama message format (with multimodal support).
+     *
+     * @param array $messages
+     * @return object{messages: array, system: null}
      */
-    protected function prepareMessages(array $messages): array {
+    protected function prepareMessages(array $messages): object {
         $transformedMessages = [];
         foreach ($messages as $msg) {
             $content = $msg->content;
@@ -80,10 +83,10 @@ class OllamaAdapter implements LLMInterface {
                     if (isset($part['type'])) {
                         if ($part['type'] === 'text') {
                             $textParts[] = $part['text'];
-                        } elseif ($part['type'] === 'image_url') {
+                        } elseif (in_array($part['type'], ['image_url', 'file_url', 'audio_url'], true)) {
                             // Extract base64 or path
                             // Assuming format: "data:image/jpeg;base64,..." OR "/path/to/file"
-                            $url = $part['image_url']['url'] ?? '';
+                            $url = $part['image_url']['url'] ?? $part['file_url']['url'] ?? $part['audio_url']['url'] ?? '';
                             if (strpos($url, 'data:') === 0) {
                                 // Extract pure base64
                                 $base64 = substr($url, strpos($url, ',') + 1);
@@ -111,7 +114,10 @@ class OllamaAdapter implements LLMInterface {
             $transformedMessages[] = $newMessage;
         }
 
-        return $transformedMessages;
+        return (object) [
+            'messages' => $transformedMessages,
+            'system'   => null,
+        ];
     }
 
     /**

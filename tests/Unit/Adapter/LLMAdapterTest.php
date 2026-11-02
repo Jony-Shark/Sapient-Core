@@ -28,7 +28,7 @@ class LLMAdapterTest extends TestCase
     /**
      * Helper to invoke protected prepareMessages() on any adapter without network calls.
      */
-    private function invokePrepareMessages(object $adapter, array $messages): array
+    private function invokePrepareMessages(object $adapter, array $messages): object
     {
         $ref = new \ReflectionMethod($adapter, 'prepareMessages');
         return $ref->invoke($adapter, $messages);
@@ -70,16 +70,29 @@ class LLMAdapterTest extends TestCase
             Message::user('Hello!'),
             Message::assistant('Hi there!'),
             $this->createImageMessage('What is this?', 'data:image/png;base64,iVBORw0KGgo='),
+            Message::user([
+                ['type' => 'text', 'text' => 'Transcribe this:'],
+                ['type' => 'audio_url', 'audio_url' => ['url' => 'data:audio/mp3;base64,QUFBQQ==']],
+                ['type' => 'file_url', 'file_url' => ['url' => 'data:application/pdf;base64,UERGRk9P']],
+            ]),
         ];
 
         $prepared = $this->invokePrepareMessages($adapter, $messages);
 
-        $this->assertCount(4, $prepared);
-        $this->assertSame('system', $prepared[0]['role']);
-        $this->assertSame('You are helpful.', $prepared[0]['content']);
-        $this->assertSame('assistant', $prepared[2]['role']);
-        $this->assertIsArray($prepared[3]['content']);
-        $this->assertSame('data:image/png;base64,iVBORw0KGgo=', $prepared[3]['content'][1]['image_url']['url']);
+        $this->assertNull($prepared->system);
+        $this->assertCount(5, $prepared->messages);
+        $this->assertSame('system', $prepared->messages[0]['role']);
+        $this->assertSame('You are helpful.', $prepared->messages[0]['content']);
+        $this->assertSame('assistant', $prepared->messages[2]['role']);
+        $this->assertIsArray($prepared->messages[3]['content']);
+        $this->assertSame('data:image/png;base64,iVBORw0KGgo=', $prepared->messages[3]['content'][1]['image_url']['url']);
+
+        // Audio & PDF blocks for OpenAI
+        $this->assertSame('input_audio', $prepared->messages[4]['content'][1]['type']);
+        $this->assertSame('mp3', $prepared->messages[4]['content'][1]['input_audio']['format']);
+        $this->assertSame('QUFBQQ==', $prepared->messages[4]['content'][1]['input_audio']['data']);
+        $this->assertSame('file', $prepared->messages[4]['content'][2]['type']);
+        $this->assertSame('data:application/pdf;base64,UERGRk9P', $prepared->messages[4]['content'][2]['file']['file_data']);
 
         // Verify generationConfig default + per-call override via MockHandler
         $history = [];
@@ -111,16 +124,22 @@ class LLMAdapterTest extends TestCase
             Message::system('System rule 1.'),
             Message::system('System rule 2.'),
             $this->createImageMessage('Describe image', 'data:image/jpeg;base64,/9j/4AAQ'),
+            Message::user([
+                ['type' => 'text', 'text' => 'Read PDF:'],
+                ['type' => 'file_url', 'file_url' => ['url' => 'data:application/pdf;base64,UERGRk9P']],
+            ]),
         ];
 
-        [$transformed, $systemPrompt] = $this->invokePrepareMessages($adapter, $messages);
+        $prepared = $this->invokePrepareMessages($adapter, $messages);
 
-        $this->assertSame("System rule 1.\n\nSystem rule 2.", $systemPrompt);
-        $this->assertCount(1, $transformed);
-        $this->assertSame('user', $transformed[0]['role']);
-        $this->assertSame('image', $transformed[0]['content'][1]['type']);
-        $this->assertSame('image/jpeg', $transformed[0]['content'][1]['source']['media_type']);
-        $this->assertSame('/9j/4AAQ', $transformed[0]['content'][1]['source']['data']);
+        $this->assertSame("System rule 1.\n\nSystem rule 2.", $prepared->system);
+        $this->assertCount(2, $prepared->messages);
+        $this->assertSame('user', $prepared->messages[0]['role']);
+        $this->assertSame('image', $prepared->messages[0]['content'][1]['type']);
+        $this->assertSame('image/jpeg', $prepared->messages[0]['content'][1]['source']['media_type']);
+        $this->assertSame('/9j/4AAQ', $prepared->messages[0]['content'][1]['source']['data']);
+        $this->assertSame('document', $prepared->messages[1]['content'][1]['type']);
+        $this->assertSame('application/pdf', $prepared->messages[1]['content'][1]['source']['media_type']);
 
         $history = [];
         $this->injectGuzzleHistory($adapter, [
@@ -151,10 +170,11 @@ class LLMAdapterTest extends TestCase
             $this->createImageMessage('Look at this', 'data:image/png;base64,AAAA'),
         ];
 
-        $transformed = $this->invokePrepareMessages($adapter, $messages);
-        $this->assertCount(1, $transformed);
-        $this->assertSame('Look at this', $transformed[0]['content']);
-        $this->assertSame(['AAAA'], $transformed[0]['images']);
+        $prepared = $this->invokePrepareMessages($adapter, $messages);
+        $this->assertNull($prepared->system);
+        $this->assertCount(1, $prepared->messages);
+        $this->assertSame('Look at this', $prepared->messages[0]['content']);
+        $this->assertSame(['AAAA'], $prepared->messages[0]['images']);
 
         $history = [];
         $this->injectGuzzleHistory($adapter, [
@@ -187,13 +207,13 @@ class LLMAdapterTest extends TestCase
             Message::assistant('Hello!'),
         ];
 
-        [$contents, $systemInstruction] = $this->invokePrepareMessages($adapter, $messages);
+        $prepared = $this->invokePrepareMessages($adapter, $messages);
 
-        $this->assertNotNull($systemInstruction);
-        $this->assertSame('Be concise.', $systemInstruction['parts'][0]['text']);
-        $this->assertCount(2, $contents);
-        $this->assertSame('user', $contents[0]['role']);
-        $this->assertSame('model', $contents[1]['role']);
+        $this->assertNotNull($prepared->system);
+        $this->assertSame('Be concise.', $prepared->system['parts'][0]['text']);
+        $this->assertCount(2, $prepared->messages);
+        $this->assertSame('user', $prepared->messages[0]['role']);
+        $this->assertSame('model', $prepared->messages[1]['role']);
 
         $history = [];
         $this->injectGuzzleHistory($adapter, [
@@ -226,27 +246,39 @@ class LLMAdapterTest extends TestCase
         $messages = [
             Message::system('System rule A'),
             Message::system('System rule B'),
-            Message::user('Check [LOCAL_IMAGE:gs://my-bucket/doc.pdf] please'),
+            Message::user('Check [LOCAL_IMAGE:gs://my-bucket/doc.pdf] and [LOCAL_AUDIO:gs://my-bucket/call.mp3] please'),
+            Message::user([
+                ['type' => 'text', 'text' => 'Transcribe this WAV:'],
+                ['type' => 'audio_url', 'audio_url' => ['url' => 'gs://my-bucket/recording.wav']],
+            ]),
             Message::assistant('Sure!'),
         ];
 
-        [$contents, $systemInstruction] = $this->invokePrepareMessages($adapter, $messages);
+        $prepared = $this->invokePrepareMessages($adapter, $messages);
 
-        $this->assertNotNull($systemInstruction);
-        $this->assertCount(2, $systemInstruction->getParts());
-        $this->assertSame('System rule A', $systemInstruction->getParts()[0]->getText());
-        $this->assertSame('System rule B', $systemInstruction->getParts()[1]->getText());
+        $this->assertNotNull($prepared->system);
+        $this->assertCount(2, $prepared->system->getParts());
+        $this->assertSame('System rule A', $prepared->system->getParts()[0]->getText());
+        $this->assertSame('System rule B', $prepared->system->getParts()[1]->getText());
 
-        $this->assertCount(2, $contents);
-        $this->assertSame('user', $contents[0]->getRole());
-        $userParts = $contents[0]->getParts();
-        $this->assertCount(3, $userParts);
+        $this->assertCount(3, $prepared->messages);
+        $this->assertSame('user', $prepared->messages[0]->getRole());
+        $userParts = $prepared->messages[0]->getParts();
+        $this->assertCount(5, $userParts);
         $this->assertSame('Check ', $userParts[0]->getText());
         $this->assertSame('gs://my-bucket/doc.pdf', $userParts[1]->getFileData()->getFileUri());
         $this->assertSame('application/pdf', $userParts[1]->getFileData()->getMimeType());
-        $this->assertSame(' please', $userParts[2]->getText());
+        $this->assertSame(' and ', $userParts[2]->getText());
+        $this->assertSame('gs://my-bucket/call.mp3', $userParts[3]->getFileData()->getFileUri());
+        $this->assertSame('audio/mpeg', $userParts[3]->getFileData()->getMimeType());
+        $this->assertSame(' please', $userParts[4]->getText());
 
-        $this->assertSame('model', $contents[1]->getRole());
+        $audioParts = $prepared->messages[1]->getParts();
+        $this->assertCount(2, $audioParts);
+        $this->assertSame('gs://my-bucket/recording.wav', $audioParts[1]->getFileData()->getFileUri());
+        $this->assertSame('audio/wav', $audioParts[1]->getFileData()->getMimeType());
+
+        $this->assertSame('model', $prepared->messages[2]->getRole());
     }
 
     public function testPipelineStepsForwardOptionsToLLMChat(): void

@@ -37,15 +37,15 @@ class AnthropicAdapter implements LLMInterface {
         }
 
         $generationConfig = $this->normalizeKeys($options);
-        [$transformedMessages, $systemPrompt] = $this->prepareMessages($messages);
+        $prepared = $this->prepareMessages($messages);
 
         // Build request body
         $body = array_merge($this->adapterOptions, $generationConfig);
         $body['model'] = $this->model;
-        $body['messages'] = $transformedMessages;
+        $body['messages'] = $prepared->messages;
 
-        if ($systemPrompt) {
-            $body['system'] = $systemPrompt;
+        if ($prepared->system) {
+            $body['system'] = $prepared->system;
         }
 
         // Call Anthropic Messages API
@@ -86,9 +86,9 @@ class AnthropicAdapter implements LLMInterface {
      * Transform Sapient Message objects into Anthropic messages and an optional top-level system prompt.
      *
      * @param array $messages
-     * @return array{0: array, 1: ?string}
+     * @return object{messages: array, system: ?string}
      */
-    protected function prepareMessages(array $messages): array {
+    protected function prepareMessages(array $messages): object {
         // Anthropic separates system prompt from messages (like Gemini)
         $systemPrompt = null;
         $transformedMessages = [];
@@ -114,15 +114,15 @@ class AnthropicAdapter implements LLMInterface {
                 foreach ($content as $partData) {
                     if (($partData['type'] ?? '') === 'text') {
                         $parts[] = ['type' => 'text', 'text' => $partData['text']];
-                    } elseif (($partData['type'] ?? '') === 'image_url') {
-                        $url = $partData['image_url']['url'] ?? '';
+                    } elseif (in_array($partData['type'] ?? '', ['image_url', 'file_url', 'audio_url'], true)) {
+                        $url = $partData['image_url']['url'] ?? $partData['file_url']['url'] ?? $partData['audio_url']['url'] ?? '';
                         
                         if (strpos($url, 'data:') === 0) {
                             // Parse data URI: data:image/jpeg;base64,/9j/4AAQ...
                             $mimeType = substr($url, 5, strpos($url, ';') - 5);
                             $base64 = substr($url, strpos($url, ',') + 1);
                             $parts[] = [
-                                'type' => 'image',
+                                'type' => ($mimeType === 'application/pdf') ? 'document' : 'image',
                                 'source' => [
                                     'type' => 'base64',
                                     'media_type' => $mimeType,
@@ -130,9 +130,10 @@ class AnthropicAdapter implements LLMInterface {
                                 ]
                             ];
                         } elseif (strpos($url, 'http') === 0) {
-                            // Anthropic supports URL images
+                            // Anthropic supports URL images and PDF documents
+                            $isPdf = str_ends_with(strtolower( strtok($url, '?') ), '.pdf');
                             $parts[] = [
-                                'type' => 'image',
+                                'type' => $isPdf ? 'document' : 'image',
                                 'source' => [
                                     'type' => 'url',
                                     'url' => $url
@@ -144,7 +145,7 @@ class AnthropicAdapter implements LLMInterface {
                             if ($fileData !== false) {
                                 $mimeType = mime_content_type($url) ?: 'image/jpeg';
                                 $parts[] = [
-                                    'type' => 'image',
+                                    'type' => ($mimeType === 'application/pdf') ? 'document' : 'image',
                                     'source' => [
                                         'type' => 'base64',
                                         'media_type' => $mimeType,
@@ -166,7 +167,10 @@ class AnthropicAdapter implements LLMInterface {
             ];
         }
 
-        return [$transformedMessages, $systemPrompt];
+        return (object) [
+            'messages' => $transformedMessages,
+            'system'   => $systemPrompt,
+        ];
     }
 
     /**

@@ -73,29 +73,68 @@ class VertexAIAdapter implements LLMInterface {
     }
 
     /**
-     * Detect MIME type from a URI string.
+     * Detect MIME type from a URI or file path string.
      */
     private function getMimeTypeFromUri(string $uri): string {
         $uri = strtolower($uri);
-
-        if (strpos($uri, '.pdf') !== false) {
-            return 'application/pdf';
-        } else if (strpos($uri, '.png') !== false) {
-            return 'image/png';
-        } else if (strpos($uri, '.gif') !== false) {
-            return 'image/gif';
-        } else if (strpos($uri, '.webp') !== false) {
-            return 'image/webp';
-        } else if (strpos($uri, '.jpg') !== false || strpos($uri, '.jpeg') !== false) {
-            return 'image/jpeg';
+        // Strip query string if present (e.g. signed URLs)
+        if (($qPos = strpos($uri, '?')) !== false) {
+            $uri = substr($uri, 0, $qPos);
         }
 
-        // Generic fallback for images if extension is found but not specifically mapped
-        if (preg_match('/\.(bmp|tiff|svg)$/', $uri, $matches)) {
-            return 'image/' . $matches[1];
+        $extensionMap = [
+            // Documents
+            'pdf'  => 'application/pdf',
+            // Images
+            'png'  => 'image/png',
+            'gif'  => 'image/gif',
+            'webp' => 'image/webp',
+            'jpg'  => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'bmp'  => 'image/bmp',
+            'tiff' => 'image/tiff',
+            'svg'  => 'image/svg+xml',
+            // Audio
+            'mp3'  => 'audio/mpeg',
+            'wav'  => 'audio/wav',
+            'ogg'  => 'audio/ogg',
+            'flac' => 'audio/flac',
+            'm4a'  => 'audio/mp4',
+            'aac'  => 'audio/aac',
+            'opus' => 'audio/opus',
+            'webm' => 'audio/webm',
+            // Video
+            'mp4'  => 'video/mp4',
+            'mov'  => 'video/quicktime',
+        ];
+
+        $ext = pathinfo($uri, PATHINFO_EXTENSION);
+        if ($ext !== '' && isset($extensionMap[$ext])) {
+            return $extensionMap[$ext];
         }
 
         return 'application/octet-stream';
+    }
+
+    /**
+     * Detect MIME type for a local file, normalizing common non-IANA OS MIME strings (like audio/x-wav).
+     */
+    private function getLocalFileMimeType(string $path): string {
+        $mime = mime_content_type($path) ?: '';
+        $normalizeMap = [
+            'audio/x-wav'  => 'audio/wav',
+            'audio/x-m4a'  => 'audio/mp4',
+            'audio/mp3'    => 'audio/mpeg',
+            'audio/x-flac' => 'audio/flac',
+        ];
+        if (isset($normalizeMap[$mime])) {
+            return $normalizeMap[$mime];
+        }
+        if ($mime !== '' && $mime !== 'application/octet-stream') {
+            return $mime;
+        }
+        $fromExt = $this->getMimeTypeFromUri($path);
+        return $fromExt !== 'application/octet-stream' ? $fromExt : 'image/jpeg';
     }
 
     // executeWithRealRetry has been moved to GaxRetryWorkaroundTrait
@@ -109,7 +148,7 @@ class VertexAIAdapter implements LLMInterface {
             $this->model
         );
 
-        [$contents, $systemInstruction] = $this->prepareMessages($messages);
+        $prepared = $this->prepareMessages($messages);
 
         $generationConfig = (new GenerationConfig());
         $mergedOptions = array_merge($this->generationConfig, $options);
@@ -124,14 +163,15 @@ class VertexAIAdapter implements LLMInterface {
 
         $request = (new GenerateContentRequest())
         ->setModel($modelName)
-        ->setContents($contents)
+        ->setContents($prepared->messages)
         ->setGenerationConfig($generationConfig);
 
-        if ($systemInstruction) {
+        if ($prepared->system) {
             if (method_exists($request, 'setSystemInstruction')) {
-                $request->setSystemInstruction($systemInstruction);
+                $request->setSystemInstruction($prepared->system);
             } else {
-                array_unshift($contents, $systemInstruction);
+                $contents = $prepared->messages;
+                array_unshift($contents, $prepared->system);
                 $request->setContents($contents);
             }
         }
@@ -174,9 +214,9 @@ class VertexAIAdapter implements LLMInterface {
      * Convert Sapient Message objects into Vertex AI Content objects and an optional system instruction.
      *
      * @param array $messages
-     * @return array{0: Content[], 1: ?Content}
+     * @return object{messages: Content[], system: ?Content}
      */
-    protected function prepareMessages(array $messages): array {
+    protected function prepareMessages(array $messages): object {
         $contents = [];
         $systemInstruction = null;
 
@@ -209,8 +249,8 @@ class VertexAIAdapter implements LLMInterface {
                     $part = new Part();
                     if (($partData['type'] ?? '') === 'text') {
                         $part->setText($partData['text']);
-                    } elseif (($partData['type'] ?? '') === 'image_url') {
-                        $url = $partData['image_url']['url'] ?? '';
+                    } elseif (in_array($partData['type'] ?? '', ['image_url', 'file_url', 'audio_url'], true)) {
+                        $url = $partData['image_url']['url'] ?? $partData['file_url']['url'] ?? $partData['audio_url']['url'] ?? '';
                         if (strpos($url, 'gs://') === 0) {
                             // GCS File Data (Reference)
                             $mimeType = $this->getMimeTypeFromUri($url);
@@ -230,9 +270,9 @@ class VertexAIAdapter implements LLMInterface {
                             // Local file
                             $fileData = file_get_contents($url);
                             if ($fileData !== false) {
-                                $mimeType = mime_content_type($url);
+                                $mimeType = $this->getLocalFileMimeType($url);
                                 $blob = new Blob();
-                                $blob->setMimeType($mimeType ?: 'image/jpeg');
+                                $blob->setMimeType($mimeType);
                                 $blob->setData($fileData);
                                 $part->setInlineData($blob);
                             }
@@ -243,8 +283,8 @@ class VertexAIAdapter implements LLMInterface {
             } else {
                 $rawText = (string)$text;
 
-                // Split the text to find [LOCAL_IMAGE:path] tokens
-                $chunks = preg_split('/\[LOCAL_IMAGE:(.*?)\]/', $rawText, -1, PREG_SPLIT_DELIM_CAPTURE);
+                // Split the text to find [LOCAL_IMAGE:path], [LOCAL_FILE:path], or [LOCAL_AUDIO:path] tokens
+                $chunks = preg_split('/\[LOCAL_(?:IMAGE|FILE|AUDIO):(.*?)\]/', $rawText, -1, PREG_SPLIT_DELIM_CAPTURE);
 
                 foreach ($chunks as $index => $chunk) {
                     if (empty($chunk)) continue;
@@ -270,9 +310,9 @@ class VertexAIAdapter implements LLMInterface {
                         if (!preg_match('/^[a-z]+:\/\//i', $imagePath) && file_exists($imagePath)) {
                             $fileData = file_get_contents($imagePath);
                             if ($fileData !== false) {
-                                $mimeType = mime_content_type($imagePath);
+                                $mimeType = $this->getLocalFileMimeType($imagePath);
                                 $blob = new Blob();
-                                $blob->setMimeType($mimeType ?: 'image/jpeg');
+                                $blob->setMimeType($mimeType);
                                 $blob->setData($fileData);
 
                                 $part = new Part();
@@ -314,6 +354,9 @@ class VertexAIAdapter implements LLMInterface {
             $contents[] = $content;
         }
 
-        return [$contents, $systemInstruction];
+        return (object) [
+            'messages' => $contents,
+            'system'   => $systemInstruction,
+        ];
     }
 }
