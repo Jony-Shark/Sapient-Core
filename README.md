@@ -11,9 +11,9 @@ Unlike traditional monolithic agent loops, Sapient decomposes intelligence into 
 
 - **Fractal Architecture:** Workflows, Agents, and Tools are all `StepInterface` implementations. Nest them as deep as you need.
 - **Pipeline-First:** Define logic as a linear or branching chain of steps (`Input` -> `Think` -> `Act` -> `Output`).
-- **Multimodel:** Built-in support for Ollama (Local) and Gemini (Cloud), swappable via `.env`.
-- **Multimodal Memory:** Persistent context handling with `Hippocampus` (Vector DB) and `Journal` (Event Log).
-- **Business Process Automation:** Integrated Workflow Engine with Control Flow (`If/Else`, `Loop`) and Stateless LLM Tasks (`GenerativeTaskStep`).
+- **Multi-Model & Multi-Provider:** Built-in adapters for Vertex AI, Google Gemini, OpenAI, Anthropic Claude, and Ollama (Local).
+- **Multimodal Memory:** Persistent context handling with [Sapient-Hippocampus](https://github.com/Jony-Shark/Sapient-Hippocampus) (Vector + Relational Audit DB) and `Journal` (Event Log).
+- **Business Process Automation:** Integrated Workflow Engine with Control Flow (`If/Else`, `Loop`, `DecisionStep`) and Stateless LLM Tasks (`GenerativeTaskStep`, `ExtractionStep`).
 
 ## LLM Adapters
 
@@ -72,7 +72,7 @@ $response = $llm->chat($messages, [
 Each adapter translates these to the format its API expects:
 - **Gemini:** Passed as-is (API is natively camelCase)
 - **Vertex:** Mapped to SDK setters dynamically (`topK` → `setTopK()`)
-- **OpenAI / Ollama:** Converted to `snake_case` internally (`topK` → `top_k`)
+- **OpenAI / Ollama / Anthropic:** Converted to `snake_case` internally (`topK` → `top_k`)
 
 > **Note:** If no options are provided, the adapter omits the generation config entirely and lets the provider use its own defaults.
 
@@ -172,9 +172,8 @@ composer require sapient/core
 - Ollama (for local LLM or Google Gemini API Key)
 
 ### Optional (Full Features)
-- Vertex AI (for Cloud LLM)
-- `composer require google/cloud-ai-platform`
-- Python 3.10+ (for Hippocampus Vector Server)
+- **Vertex AI** (for Enterprise Cloud LLM): `composer require google/cloud-ai-platform`
+- **[Sapient-Hippocampus](https://github.com/Jony-Shark/Sapient-Hippocampus)** (Long-Term Vector & Audit Memory): `composer require sapient/hippocampus` (requires Python 3.10+ for the FastAPI/FAISS server)
 
 ### 1. Basic Usage (Minimal)
 The `chat.php` entry point is a lightweight, minimal-dependency starter.
@@ -200,10 +199,12 @@ cp examples/demo_chat.php local_chat.php
 php local_chat.php
 ```
 
-### 3. Creating a Custom Agent
+### 4. Creating a Custom Agent
 The `AgentLoop` manages the conversation lifecycle.
 
 ```php
+use Sapient\Core\State;
+use Sapient\Core\Message;
 use Sapient\Core\Pipeline;
 use Sapient\Core\AgentLoop;
 use Sapient\Adapter\OllamaAdapter;
@@ -218,7 +219,7 @@ $pipeline->addStep(new SimpleAgentStep($llm));
 
 // 3. Run Loop
 $state = new State();
-$state->set('input', 'Hello, who are you?');
+$state->appendHistory(Message::user('Hello, who are you?'));
 
 $loop = new AgentLoop($pipeline);
 $state = $loop->run($state);
@@ -226,7 +227,7 @@ $state = $loop->run($state);
 echo $state->get('last_response');
 ```
 
-### 2. Defining a Business Workflow
+### 5. Defining a Business Workflow
 Workflows allow for structured, deterministic logic mixed with AI reasoning.
 
 ```php
